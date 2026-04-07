@@ -6,7 +6,3 @@ A Perceptual Loss–Driven Framework for Reducing MRI Artifact–Tissue Confusio
   
 ## Usage
 The perceptnet model is avaiable for research-use only. COMMERCIAL USE IS PROHIBITED for the time being. 
-
-### set environment variables
-
-### run inference with the trained model
