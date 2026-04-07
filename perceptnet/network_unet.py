@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import basicblock as B
 import numpy as np
-
+from simple_attention import *
 
 '''
 # ====================
@@ -69,23 +69,17 @@ class UNet(nn.Module):
 
         return x
 
-class ChannelAttention(nn.Module):
-    def __init__(self, in_planes, ratio=16):
-        super(ChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-
-        self.fc1 = nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False)
-        self.relu1 = nn.ReLU()
-        self.fc2 = nn.Conv2d(in_planes // ratio, in_planes, 1, bias=False)
-        self.sigmoid = nn.Sigmoid()
+class CBAM(nn.Module):
+    def __init__(self, channels, reduction=16, kernel_size=7):
+        super(CBAM, self).__init__()
+        self.channel_attention = ChannelAttention(channels, reduction)
+        self.spatial_attention = SpatialAttention(kernel_size)
 
     def forward(self, x):
-        avg_out = self.fc2(self.relu1(self.fc1(self.avg_pool(x))))
-        max_out = self.fc2(self.relu1(self.fc1(self.max_pool(x))))
-        out = avg_out + max_out
-        return self.sigmoid(out)
-
+        x = x * self.channel_attention(x)
+        x = x * self.spatial_attention(x)
+        return x
+        
 class UNetRes(nn.Module):
     def __init__(self, in_nc=1, out_nc=1, nc=[64, 128, 256, 512], nb=4, act_mode='R', downsample_mode='strideconv',upsample_mode='convtranspose'):
         super(UNetRes, self).__init__()
@@ -113,7 +107,9 @@ class UNetRes(nn.Module):
             downsample_block(nc[2], nc[3], bias=False, mode='2'))
 
         self.m_body = B.sequential(
-            *[B.ResBlock(nc[3], nc[3], bias=False, mode='C' + act_mode + 'C') for _ in range(nb)])
+            *[B.ResBlock(nc[3], nc[3], bias=False, mode='C' + act_mode + 'C') for _ in range(nb)],
+            CBAM(nc[3])
+        )
 
         # upsample
         if upsample_mode == 'upconv':
