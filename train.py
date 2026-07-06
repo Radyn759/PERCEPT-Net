@@ -4,15 +4,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import nibabel as nib
 import argparse
 from tqdm import tqdm
+import pydicom
 from perceptnet.network_unet import UNetRes
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_dir', type=str, required=True, help='nii input')
-    parser.add_argument('--gt_dir', type=str, required=True, help='nii GT')
+    parser.add_argument('--input_dir', type=str, required=True, help='DICOM_input)
+    parser.add_argument('--gt_dir', type=str, required=True, help='GT DICOM')
     parser.add_argument('--output_dir', type=str, default='./checkpoints', help='save path')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--epochs', type=int, default=100)
@@ -31,60 +31,115 @@ def get_args():
     parser.add_argument('--lambda_pixel', type=float, default=100.0)
     return parser.parse_args()
 
-class NiiDataset(Dataset):
-    def __init__(self, input_dir, gt_dir):
-        self.input_paths = sorted([os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith('.nii') or f.endswith('.nii.gz')])
-        self.gt_paths = sorted([os.path.join(gt_dir, f) for f in os.listdir(gt_dir) if f.endswith('.nii') or f.endswith('.nii.gz')])
-        assert len(self.input_paths) == len(self.gt_paths)
+
+def load_dicom_series(series_folder):
+    dcm_files = []
+    for fname in os.listdir(series_folder):
+        fpath = os.path.join(series_folder, fname)
+        try:
+            ds = pydicom.dcmread(fpath, stop_before_pixels=True)
+            dcm_files.append((ds.SliceLocation, fpath))
+        except Exception:
+            continue
+
+    dcm_files.sort(key=lambda x: x[0])
+    slices = []
+    for _, path in dcm_files:
+        ds = pydicom.dcmread(path)
+        img = ds.pixel_array.astype(np.float32)
+        slices.append(img)
+    vol = np.stack(slices, axis=0)  # (N, H, W)
+    return vol
+
+
+class DicomDataset(Dataset):
+    def __init__(self, input_root, gt_root):
+        self.input_root = input_root
+        self.gt_root = gt_root
+
+        self.series_ids = sorted([
+            d for d in os.listdir(input_root)
+            if os.path.isdir(os.path.join(input_root, d))
+        ])
+
+        for sid in self.series_ids:
+            gt_series_path = os.path.join(gt_root, sid)
+            assert os.path.isdir(gt_series_path), f"GT缺失序列文件夹: {sid}"
 
     def __len__(self):
-        return len(self.input_paths)
+        return len(self.series_ids)
 
     def norm(self, img):
-        img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+        min_val = np.min(img)
+        max_val = np.max(img)
+        img = (img - min_val) / (max_val - min_val + 1e-8)
         return img.astype(np.float32)
 
     def __getitem__(self, idx):
+        sid = self.series_ids[idx]
+        input_series_path = os.path.join(self.input_root, sid)
+        gt_series_path = os.path.join(self.gt_root, sid)
 
-        input_nii = nib.load(self.input_paths[idx])
-        input_img = input_nii.get_fdata()
-        input_img = self.norm(input_img)
-      
-        gt_nii = nib.load(self.gt_paths[idx])
-        gt_img = gt_nii.get_fdata()
-        gt_img = self.norm(gt_img)
+        input_vol = load_dicom_series(input_series_path)
+        gt_vol = load_dicom_series(gt_series_path)
 
-        input_img = torch.from_numpy(input_img).unsqueeze(0)
-        gt_img = torch.from_numpy(gt_img).unsqueeze(0)
-        return input_img, gt_img
+        input_vol = self.norm(input_vol)
+        gt_vol = self.norm(gt_vol)
 
-class Discriminator(nn.Module):
-    def __init__(self, in_nc=1):
+        input_tensor = torch.from_numpy(input_vol).unsqueeze(1)
+        gt_tensor = torch.from_numpy(gt_vol).unsqueeze(1)
+
+        return input_tensor, gt_tensor
+
+class PatchGAN2D(nn.Module):
+    def __init__(self, input_channels=2, ndf=64, n_layers=3):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv3d(in_nc*2, 64, 4, 2, 1), nn.LeakyReLU(0.2),
-            nn.Conv3d(64, 128, 4, 2, 1), nn.BatchNorm3d(128), nn.LeakyReLU(0.2),
-            nn.Conv3d(128, 256, 4, 2, 1), nn.BatchNorm3d(256), nn.LeakyReLU(0.2),
-            nn.Conv3d(256, 1, 4, 1, 1)
-        )
+        layers = []
 
-    def forward(self, x, y):
-        inp = torch.cat([x, y], dim=1)
-        return self.net(inp)
+        layers.append(nn.Conv2d(input_channels, ndf, kernel_size=4, stride=2, padding=1))
+        layers.append(nn.LeakyReLU(0.2, True))
+
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            layers.append(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=4, stride=2, padding=1))
+            layers.append(nn.BatchNorm2d(ndf * nf_mult))
+            layers.append(nn.LeakyReLU(0.2, True))
+
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2 ** n_layers, 8)
+        layers.append(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=4, stride=1, padding=1))
+        layers.append(nn.BatchNorm2d(ndf * nf_mult))
+        layers.append(nn.LeakyReLU(0.2, True))
+
+
+        layers.append(nn.Conv2d(ndf * nf_mult, 1, kernel_size=4, stride=1, padding=1))
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, img, cond):
+        combined = torch.cat([img, cond], dim=1)
+        return self.model(combined)
+
 
 def main():
     args = get_args()
     os.makedirs(args.output_dir, exist_ok=True)
     device = args.device
-  
-    dataset = NiiDataset(args.input_dir, args.gt_dir)
+
+    dataset = DicomDataset(args.input_dir, args.gt_dir)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
     generator = UNetRes(
         in_nc=args.in_nc, out_nc=args.out_nc, nc=args.nc, nb=args.nb,
         act_mode=args.act_mode, downsample_mode=args.downsample_mode, upsample_mode=args.upsample_mode
     ).to(device)
-    
+
+    discriminator = PatchGAN2D(input_channels=2, ndf=64, n_layers=3).to(device)
+
     opt_G = optim.Adam(generator.parameters(), lr=args.lr, betas=(0.5, 0.999))
     opt_D = optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.5, 0.999))
 
@@ -96,43 +151,49 @@ def main():
         discriminator.train()
         pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}")
 
-        for input_img, gt_img in pbar:
-            input_img = input_img.to(device)
-            gt_img = gt_img.to(device)
-            bs = input_img.size(0)
-          
-            real_label = torch.ones(bs, 1, 1, 1, 1).to(device)
-            fake_label = torch.zeros(bs, 1, 1, 1, 1).to(device)
-=
-            opt_G.zero_grad()
-            fake_img = generator(input_img)  # 核心：output = model(input)
+        for input_vol, gt_vol in pbar:
+            B, N, C, H, W = input_vol.shape
+            input_vol = input_vol.to(device)
+            gt_vol = gt_vol.to(device)
 
-            pred_fake = discriminator(fake_img, input_img)
+            input_2d = input_vol.reshape(B * N, C, H, W)
+            gt_2d = gt_vol.reshape(B * N, C, H, W)
+
+            dummy_out = discriminator(gt_2d, input_2d)
+            _, _, ph, pw = dummy_out.shape
+            real_label = torch.ones(B * N, 1, ph, pw).to(device)
+            fake_label = torch.zeros(B * N, 1, ph, pw).to(device)
+
+            opt_G.zero_grad()
+            fake_2d = generator(input_2d)  # (B*N, 1, H, W)
+
+            pred_fake = discriminator(fake_2d, input_2d)
             loss_G_gan = criterion_gan(pred_fake, real_label)
-            
-            loss_G_pixel = criterion_pixel(fake_img, gt_img)
-            
+            loss_G_pixel = criterion_pixel(fake_2d, gt_2d)
             loss_G = args.lambda_gan * loss_G_gan + args.lambda_pixel * loss_G_pixel
             loss_G.backward()
             opt_G.step()
 
             opt_D.zero_grad()
-            
-            pred_real = discriminator(gt_img, input_img)
+            pred_real = discriminator(gt_2d, input_2d)
             loss_D_real = criterion_gan(pred_real, real_label)
 
-            pred_fake = discriminator(fake_img.detach(), input_img)
-            loss_D_fake = criterion_gan(pred_fake, fake_label)
-            
+            pred_fake_detach = discriminator(fake_2d.detach(), input_2d)
+            loss_D_fake = criterion_gan(pred_fake_detach, fake_label)
             loss_D = (loss_D_real + loss_D_fake) * 0.5
             loss_D.backward()
             opt_D.step()
 
-            pbar.set_postfix({"G": loss_G.item(), "D": loss_D.item()})
+            pbar.set_postfix({
+                "G_loss": loss_G.item(),
+                "D_loss": loss_D.item()
+            })
 
         if (epoch + 1) % 10 == 0:
             torch.save(generator.state_dict(), os.path.join(args.output_dir, f"G_epoch{epoch+1}.pth"))
             torch.save(discriminator.state_dict(), os.path.join(args.output_dir, f"D_epoch{epoch+1}.pth"))
+            print(f"Save checkpoint epoch {epoch+1} to {args.output_dir}")
+
 
 if __name__ == '__main__':
     main()
