@@ -64,7 +64,7 @@ class DicomDataset(Dataset):
 
         for sid in self.series_ids:
             gt_series_path = os.path.join(gt_root, sid)
-            assert os.path.isdir(gt_series_path), f"GT缺失序列文件夹: {sid}"
+            assert os.path.isdir(gt_series_path), f"missing: {sid}"
 
     def __len__(self):
         return len(self.series_ids)
