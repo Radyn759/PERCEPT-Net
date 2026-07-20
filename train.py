@@ -27,6 +27,7 @@ def get_args():
     parser.add_argument('--downsample_mode', type=str, default='strideconv')
     parser.add_argument('--upsample_mode', type=str, default='convtranspose')
 
+    parser.add_argument('--percept_ckpt',type=str,default='')
     parser.add_argument('--lambda_gan', type=float, default=1.0)
     parser.add_argument('--lambda_pixel', type=float, default=100.0)
     parser.add_argument('--lambda_percept', type=float, default=0.5, help='perceptual loss weight')
@@ -184,6 +185,7 @@ def main():
     discriminator = PatchGAN2D(input_channels=2, ndf=64, n_layers=3).to(device)
 
     percept_extractor = PerceptualFeatureExtractor(in_channels=args.in_nc, base_dim=32).to(device)
+    percept_extractor.load_state_dict(torch.load(args.percept_ckpt))
     percept_extractor.eval()
 
     opt_G = optim.Adam(generator.parameters(), lr=args.lr, betas=(0.5, 0.999))
@@ -218,7 +220,7 @@ def main():
             loss_G_pixel = criterion_pixel(fake_2d, gt_2d)
             loss_G_percept = calc_perceptual_loss(percept_extractor, fake_2d, gt_2d)
             
-            loss_G = args.lambda_gan * loss_G_gan + args.lambda_pixel * loss_G_pixel
+            loss_G = args.lambda_gan * loss_G_gan + args.lambda_pixel * loss_G_pixel + args.lambda_percept * loss_G_percept
             loss_G.backward()
             opt_G.step()
 
