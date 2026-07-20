@@ -29,6 +29,7 @@ def get_args():
 
     parser.add_argument('--lambda_gan', type=float, default=1.0)
     parser.add_argument('--lambda_pixel', type=float, default=100.0)
+    parser.add_argument('--lambda_percept', type=float, default=0.5, help='perceptual loss weight')
     return parser.parse_args()
 
 
