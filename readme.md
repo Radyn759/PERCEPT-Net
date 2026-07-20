@@ -16,7 +16,7 @@ git clone https://github.com/Radyn759/PERCEPT-Net.git
 cd PERCEPT-Net
 Install dependencies:
 bash
-运行
+
 pip install torch torchvision
 pip install pydicom numpy tqdm
 Data Preparation
@@ -60,7 +60,7 @@ After training, the best encoder weight best_percept_encoder.pth will be saved i
 2. Main Model Training
 Train the artifact removal generation network with the joint supervision of GAN loss, pixel loss and perceptual loss.
 bash
-运行
+
 python train.py \
   --input_dir ./data/input \
   --gt_dir ./data/gt \
@@ -82,7 +82,7 @@ Checkpoints will be saved every 10 epochs, including complete training states su
 3. Inference
 Use the trained model to perform artifact removal inference on DICOM data:
 bash
-运行
+
 python inference.py \
   --input_dir ./data/test_input \
   --output_dir ./results \
