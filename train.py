@@ -124,7 +124,49 @@ class PatchGAN2D(nn.Module):
         combined = torch.cat([img, cond], dim=1)
         return self.model(combined)
 
+class PerceptualFeatureExtractor(nn.Module):
+    def __init__(self, in_channels=1, base_dim=32):
+        super().__init__()
+        self.stage1 = nn.Sequential(
+            nn.Conv2d(in_channels, base_dim, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(base_dim, base_dim, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+        self.stage2 = nn.Sequential(
+            nn.Conv2d(base_dim, base_dim * 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(base_dim * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(base_dim * 2, base_dim * 2, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(base_dim * 2),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+        self.stage3 = nn.Sequential(
+            nn.Conv2d(base_dim * 2, base_dim * 4, kernel_size=3, padding=1),
+            nn.BatchNorm2d(base_dim * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(base_dim * 4, base_dim * 4, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(base_dim * 4),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
 
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def forward(self, x):
+        feat1 = self.stage1(x)
+        feat2 = self.stage2(feat1)
+        feat3 = self.stage3(feat2)
+        return [feat1, feat2, feat3]
+
+def calc_perceptual_loss(feat_extractor, pred_img, gt_img):
+    pred_feats = feat_extractor(pred_img)
+    gt_feats = feat_extractor(gt_img)
+    loss = 0.0
+    for pred_feat, gt_feat in zip(pred_feats, gt_feats):
+        loss += nn.functional.l1_loss(pred_feat, gt_feat)
+    return loss / len(pred_feats)
+    
 def main():
     args = get_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -139,6 +181,9 @@ def main():
     ).to(device)
 
     discriminator = PatchGAN2D(input_channels=2, ndf=64, n_layers=3).to(device)
+
+    percept_extractor = PerceptualFeatureExtractor(in_channels=args.in_nc, base_dim=32).to(device)
+    percept_extractor.eval()
 
     opt_G = optim.Adam(generator.parameters(), lr=args.lr, betas=(0.5, 0.999))
     opt_D = optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.5, 0.999))
@@ -170,6 +215,8 @@ def main():
             pred_fake = discriminator(fake_2d, input_2d)
             loss_G_gan = criterion_gan(pred_fake, real_label)
             loss_G_pixel = criterion_pixel(fake_2d, gt_2d)
+            loss_G_percept = calc_perceptual_loss(percept_extractor, fake_2d, gt_2d)
+            
             loss_G = args.lambda_gan * loss_G_gan + args.lambda_pixel * loss_G_pixel
             loss_G.backward()
             opt_G.step()
@@ -186,7 +233,8 @@ def main():
 
             pbar.set_postfix({
                 "G_loss": loss_G.item(),
-                "D_loss": loss_D.item()
+                "D_loss": loss_D.item(),
+                "percept_loss": loss_G_percept.item()
             })
 
         if (epoch + 1) % 10 == 0:
