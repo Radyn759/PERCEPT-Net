@@ -11,7 +11,7 @@ from perceptnet.network_unet import UNetRes
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_dir', type=str, required=True, help='DICOM_input)
+    parser.add_argument('--input_dir', type=str, required=True, help='DICOM_input')
     parser.add_argument('--gt_dir', type=str, required=True, help='GT DICOM')
     parser.add_argument('--output_dir', type=str, default='./checkpoints', help='save path')
     parser.add_argument('--batch_size', type=int, default=1)
