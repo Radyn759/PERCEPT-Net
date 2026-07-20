@@ -119,8 +119,8 @@ python train.py \
     --batch_size 1 \
     --lr 1e-4 \
     --lambda_gan 1.0 \
-    --lambda_pixel 100.0 \
-    --lambda_percept 0.5 \
+    --lambda_pixel 1.0 \
+    --lambda_percept 1.0 \
     --device cuda
 ```
 
