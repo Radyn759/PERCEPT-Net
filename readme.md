@@ -12,7 +12,7 @@ Official PyTorch implementation of **PERCEPT-Net**, a deep learning framework fo
 
 - Python >= 3.8
 - PyTorch >= 1.10.0 (CUDA version recommended)
-- torchvision
+- torchvision >= 0.11.0
 - pydicom >= 2.3.0
 - NumPy >= 1.21
 - tqdm >= 4.62
