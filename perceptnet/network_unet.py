@@ -139,7 +139,7 @@ class UNetRes(nn.Module):
         x = self.m_up3(x + x4)
         x = self.m_up2(x + x3)
         x = self.m_up1(x + x2)
-        x = self.m_tail(x + x1)
+        x = self.m_tail(x + x1) + x0
         return x
 
 '''
