@@ -247,3 +247,36 @@ This project is provided **for academic research purposes only**.
 Commercial use is currently prohibited.
 
 All rights are reserved by the authors.
+
+# TODO / Roadmap
+
+The following components are currently under active development to improve reproducibility and usability.
+
+## Data Processing Pipeline
+
+- [ ] Provide a complete DICOM-to-training-data conversion pipeline.
+
+  The planned pipeline will include:
+
+  - DICOM series loading
+  - Slice ordering based on spatial information
+  - Intensity correction and normalization
+  - Paired dataset generation
+  - Export to training-ready formats (`.npy` / `.h5` / `.pt`)
+
+  Example workflow:
+
+  ```text
+  Raw DICOM Series
+          |
+          ↓
+  DICOM preprocessing
+          |
+          ↓
+  Intensity normalization
+          |
+          ↓
+  Training dataset generation
+          |
+          ↓
+  PERCEPT-Net training
